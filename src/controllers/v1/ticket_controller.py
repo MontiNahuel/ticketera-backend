@@ -17,6 +17,7 @@ async def create_ticket(
     correo: EmailStr = Form(..., description="Correo del solicitante"),
     prioridad: PrioridadEnum = Form(PrioridadEnum.MEDIA, description="Prioridad del ticket"),
     asignar: Optional[str] = Form(None, description="Técnico asignado (opcional)"),
+    columna: Optional[int] = Form(1, description="Columna del ticket (1: Ticket, 2: Hitos, 3: Tareas, 4: Tareas periódicas)"),
     files: List[UploadFile] = File(default=[], description="Solo archivos de imagen permitidos (PNG, JPEG, WebP, GIF, SVG)"),
     service: TicketService = Depends(),
     gridfs_service: GridFSService = Depends()
@@ -26,7 +27,8 @@ async def create_ticket(
         descripcion=descripcion,
         correo=correo,
         prioridad=prioridad,
-        asignar=asignar
+        asignar=asignar,
+        columna=columna or 1
     )
     # Filtrar solo archivos válidos con nombre
     valid_files = [f for f in files if getattr(f, "filename", None)]
@@ -44,6 +46,7 @@ async def get_tickets(
     estado: Optional[EstadoEnum] = Query(None, description="Filtrar por estado del ticket"),
     prioridad: Optional[PrioridadEnum] = Query(None, description="Filtrar por prioridad"),
     asignar: Optional[str] = Query(None, description="Filtrar por técnico/usuario asignado"),
+    columna: Optional[int] = Query(None, ge=1, le=4, description="Filtrar por columna (1, 2, 3, 4)"),
     skip: int = Query(0, ge=0, description="Registros a omitir"),
     limit: int = Query(100, ge=1, le=500, description="Límite de registros a devolver"),
     service: TicketService = Depends()
@@ -53,7 +56,8 @@ async def get_tickets(
         "fecha_hasta": fecha_hasta,
         "estado": estado,
         "prioridad": prioridad,
-        "asignar": asignar
+        "asignar": asignar,
+        "columna": columna
     }
     clean_filters = {k: v for k, v in filters.items() if v is not None}
     return await service.get_all_tickets(

@@ -65,3 +65,9 @@ desktop.ini
 # Logs
 *.log
 logs/
+
+skills-lock.json
+.agents/
+.claude/
+.docs/
+run_backend.bat

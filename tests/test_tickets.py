@@ -51,6 +51,7 @@ def test_ticket_crud_and_gridfs_flow(client):
     assert ticket["estado"] == "abierto"
     assert ticket["identificador"].startswith("TCK-")
     assert ticket["fecha_edicion"] is None
+    assert ticket["columna"] == 1
     assert len(ticket["imagenes"]) == 2
     
     ticket_id = ticket["id"]
@@ -101,13 +102,15 @@ def test_ticket_crud_and_gridfs_flow(client):
     # 6. Actualizar campos del ticket con PATCH
     patch_payload = {
         "estado": "en_progreso",
-        "prioridad": "critica"
+        "prioridad": "critica",
+        "columna": 3
     }
     patch_res = client.patch(f"/api/v1/tickets/{ticket_id}", json=patch_payload)
     assert patch_res.status_code == 200
     updated_ticket = patch_res.json()
     assert updated_ticket["estado"] == "en_progreso"
     assert updated_ticket["prioridad"] == "critica"
+    assert updated_ticket["columna"] == 3
 
     # 7. Eliminar el ticket completo (DELETE) y limpiar sus fotos restantes
     delete_res = client.delete(f"/api/v1/tickets/{ticket_id}")
@@ -161,6 +164,20 @@ def test_ticket_filters(client):
     res_solo_hasta = client.get("/api/v1/tickets/", params={"fecha_hasta": hoy_iso_hora})
     assert res_solo_hasta.status_code == 200
     assert len(res_solo_hasta.json()) >= 2
+
+    # 6. Filtrar por columna
+    uid_col = uuid.uuid4().hex[:6]
+    client.post("/api/v1/tickets/", data={
+        "titulo": "Ticket Columna 2",
+        "descripcion": "Probando filtro columna",
+        "correo": f"col2_{uid_col}@coopya.com",
+        "columna": 2
+    })
+    res_col = client.get("/api/v1/tickets/?columna=2")
+    assert res_col.status_code == 200
+    tickets_col2 = res_col.json()
+    assert len(tickets_col2) >= 1
+    assert all(t["columna"] == 2 for t in tickets_col2)
 
 def test_catalog_endpoints(client):
     # 1. Estados
