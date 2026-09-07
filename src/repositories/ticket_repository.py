@@ -22,6 +22,9 @@ class TicketRepository(BaseRepository[Ticket, TicketCreate, TicketUpdate]):
         if filters.get("prioridad"):
             query["prioridad"] = filters["prioridad"]
             
+        if filters.get("columna"):
+            query["columna"] = filters["columna"]
+            
         if filters.get("asignar"):
             query["asignar"] = {"$regex": filters["asignar"], "$options": "i"}
             

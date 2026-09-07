@@ -11,6 +11,7 @@ class TicketCreate(BaseModel):
     prioridad: Optional[PrioridadEnum] = Field(default=PrioridadEnum.MEDIA, description="Prioridad del ticket")
     asignar: Optional[str] = Field(default=None, description="Usuario o técnico asignado")
     imagenes: Optional[List[str]] = Field(default_factory=list, description="Lista opcional de IDs o URLs de imágenes")
+    columna: Optional[int] = Field(default=1, ge=1, le=4, description="ID numérico de la columna")
 
 class TicketUpdate(BaseModel):
     titulo: Optional[str] = Field(None, min_length=3, max_length=150)
@@ -20,6 +21,7 @@ class TicketUpdate(BaseModel):
     estado: Optional[EstadoEnum] = None
     asignar: Optional[str] = None
     imagenes: Optional[List[str]] = None
+    columna: Optional[int] = Field(None, ge=1, le=4, description="ID numérico de la columna")
 
 class TicketFilter(BaseModel):
     fecha_desde: Optional[Union[datetime, str]] = None
@@ -27,6 +29,7 @@ class TicketFilter(BaseModel):
     estado: Optional[EstadoEnum] = None
     prioridad: Optional[PrioridadEnum] = None
     asignar: Optional[str] = None
+    columna: Optional[int] = Field(None, ge=1, le=4, description="Filtrar por columna")
 
 class TicketResponse(BaseModel):
     id: PydanticObjectId
@@ -40,6 +43,7 @@ class TicketResponse(BaseModel):
     imagenes: List[str]
     fecha_creacion: datetime
     fecha_edicion: Optional[datetime]
+    columna: int = Field(default=1)
 
     @field_serializer("fecha_creacion", "fecha_edicion", when_used="json")
     def serialize_datetime(self, dt: Optional[datetime]) -> Optional[str]:

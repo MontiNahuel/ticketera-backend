@@ -27,6 +27,7 @@ class Ticket(Document):
     correo: EmailStr
     prioridad: PrioridadEnum = Field(default=PrioridadEnum.MEDIA)
     estado: EstadoEnum = Field(default=EstadoEnum.ABIERTO)
+    columna: int = Field(default=1, ge=1, le=4, description="ID numérico de la columna (1: Ticket, 2: Hitos, 3: Tareas, 4: Tareas periódicas)")
 
     class Settings:
         name = "tickets"
