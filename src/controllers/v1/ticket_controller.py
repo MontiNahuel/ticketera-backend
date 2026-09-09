@@ -1,12 +1,17 @@
-from fastapi import APIRouter, Depends, status, UploadFile, File, Form, Query
+import asyncio
+import json
+from fastapi import APIRouter, Depends, status, UploadFile, File, Form, Query, Request
+from fastapi.responses import StreamingResponse
 from typing import List, Optional, Union
 from datetime import datetime
 from pydantic import EmailStr
 from beanie import PydanticObjectId
 from ...schemas.ticket_schema import TicketCreate, TicketUpdate, TicketResponse
-from ...models.ticket_model import PrioridadEnum, EstadoEnum
+from ...models.ticket_model import PrioridadEnum, EstadoEnum, Frecuencia
 from ...services.ticket_service import TicketService
 from ...services.gridfs_service import GridFSService
+from ...core.exceptions import BadRequestException
+from ...core.sse_manager import sse_manager
 
 router = APIRouter(prefix="/tickets", tags=["Tickets"])
 
@@ -18,17 +23,30 @@ async def create_ticket(
     prioridad: PrioridadEnum = Form(PrioridadEnum.MEDIA, description="Prioridad del ticket"),
     asignar: Optional[str] = Form(None, description="Técnico asignado (opcional)"),
     columna: Optional[int] = Form(1, description="Columna del ticket (1: Ticket, 2: Hitos, 3: Tareas, 4: Tareas periódicas)"),
+    frecuencia: Optional[str] = Form(None, description="Frecuencia periódica en formato JSON: {\"numero\": 1, \"periodo\": \"Semanas\"}"),
     files: List[UploadFile] = File(default=[], description="Solo archivos de imagen permitidos (PNG, JPEG, WebP, GIF, SVG)"),
     service: TicketService = Depends(),
     gridfs_service: GridFSService = Depends()
 ):
+    frecuencia_obj: Optional[Frecuencia] = None
+    if frecuencia:
+        try:
+            if isinstance(frecuencia, str):
+                frecuencia_data = json.loads(frecuencia)
+            else:
+                frecuencia_data = frecuencia
+            frecuencia_obj = Frecuencia.model_validate(frecuencia_data)
+        except Exception as e:
+            raise BadRequestException(f"Formato de frecuencia inválido: {e}")
+
     ticket_in = TicketCreate(
         titulo=titulo,
         descripcion=descripcion,
         correo=correo,
         prioridad=prioridad,
         asignar=asignar,
-        columna=columna or 1
+        columna=columna or 1,
+        frecuencia=frecuencia_obj
     )
     # Filtrar solo archivos válidos con nombre
     valid_files = [f for f in files if getattr(f, "filename", None)]
@@ -39,6 +57,40 @@ async def create_ticket(
         gridfs_service=gridfs_service
     )
 
+@router.get("/stream", summary="Canal en tiempo real (Server-Sent Events) para nuevos tickets")
+async def ticket_stream(request: Request):
+    """
+    Canal continuo SSE para notificaciones en vivo.
+    Emite eventos 'nuevo_ticket' y comentarios keep-alive ': ping' cada 15 segundos.
+    """
+    async def event_generator():
+        queue = await sse_manager.subscribe()
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    # Esperar evento con timeout de 15 segundos para keep-alive ping
+                    item = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    event = item.get("event", "nuevo_ticket")
+                    data_str = json.dumps(item.get("data", {}))
+                    yield f"event: {event}\ndata: {data_str}\n\n"
+                except asyncio.TimeoutError:
+                    # Keep-alive ping para evitar que Railway o proxies cierren la conexión
+                    yield ": ping\n\n"
+        finally:
+            sse_manager.unsubscribe(queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
 @router.get("/", response_model=List[TicketResponse], summary="Listar tickets con filtros y paginación")
 async def get_tickets(
     fecha_desde: Optional[str] = Query(None, description="Fecha de inicio flexible (ej: 2026-08-01 o 2026-08-01T14:30:00)"),
@@ -47,6 +99,7 @@ async def get_tickets(
     prioridad: Optional[PrioridadEnum] = Query(None, description="Filtrar por prioridad"),
     asignar: Optional[str] = Query(None, description="Filtrar por técnico/usuario asignado"),
     columna: Optional[int] = Query(None, ge=1, le=4, description="Filtrar por columna (1, 2, 3, 4)"),
+    leido: Optional[bool] = Query(None, description="Filtrar por leído (true/false)"),
     skip: int = Query(0, ge=0, description="Registros a omitir"),
     limit: int = Query(100, ge=1, le=500, description="Límite de registros a devolver"),
     service: TicketService = Depends()
@@ -57,7 +110,8 @@ async def get_tickets(
         "estado": estado,
         "prioridad": prioridad,
         "asignar": asignar,
-        "columna": columna
+        "columna": columna,
+        "leido": leido
     }
     clean_filters = {k: v for k, v in filters.items() if v is not None}
     return await service.get_all_tickets(
@@ -65,6 +119,10 @@ async def get_tickets(
         skip=skip,
         limit=limit
     )
+
+@router.patch("/{id}/read", response_model=TicketResponse, summary="Marcar ticket como leído")
+async def mark_ticket_as_read(id: PydanticObjectId, service: TicketService = Depends()):
+    return await service.mark_as_read(id)
 
 @router.get("/{id}", response_model=TicketResponse, summary="Obtener ticket por ID")
 async def get_ticket(id: PydanticObjectId, service: TicketService = Depends()):

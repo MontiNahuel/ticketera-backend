@@ -25,6 +25,9 @@ class TicketRepository(BaseRepository[Ticket, TicketCreate, TicketUpdate]):
         if filters.get("columna"):
             query["columna"] = filters["columna"]
             
+        if "leido" in filters and filters["leido"] is not None:
+            query["leido"] = filters["leido"]
+            
         if filters.get("asignar"):
             query["asignar"] = {"$regex": filters["asignar"], "$options": "i"}
             

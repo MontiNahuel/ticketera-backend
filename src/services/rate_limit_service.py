@@ -18,6 +18,12 @@ class RateLimitService:
             return
 
         correo_limpio = correo.strip().lower()
+
+        # Los administradores en la lista blanca quedan exentos de cooldown y límite diario
+        admin_emails = [admin.strip().lower() for admin in settings.ADMIN_EMAILS]
+        if correo_limpio in admin_emails:
+            return
+
         ahora = datetime.now(timezone.utc)
         limite_24h = ahora - timedelta(hours=24)
 

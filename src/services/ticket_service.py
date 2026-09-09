@@ -4,9 +4,10 @@ from fastapi import Depends, UploadFile
 from beanie import PydanticObjectId
 from pymongo import ReturnDocument
 from ..repositories.ticket_repository import TicketRepository
-from ..schemas.ticket_schema import TicketCreate, TicketUpdate
+from ..schemas.ticket_schema import TicketCreate, TicketUpdate, TicketResponse
 from ..models.ticket_model import Ticket
 from ..core.exceptions import NotFoundException
+from ..core.sse_manager import sse_manager
 from .rate_limit_service import RateLimitService
 
 class TicketService:
@@ -114,7 +115,16 @@ class TicketService:
 
             # 3. Guardar el documento Ticket en MongoDB
             created_ticket = Ticket(**ticket_data)
-            return await created_ticket.insert()
+            saved_ticket = await created_ticket.insert()
+
+            # 4. Notificar a las pantallas conectadas vía SSE
+            try:
+                ticket_resp = TicketResponse.model_validate(saved_ticket)
+                await sse_manager.broadcast("nuevo_ticket", ticket_resp.model_dump(mode="json"))
+            except Exception:
+                pass
+
+            return saved_ticket
 
         except Exception as exc:
             # --- ROLLBACK AUTOMÁTICO EN EL BACKEND ---
@@ -130,6 +140,12 @@ class TicketService:
                 except Exception:
                     pass
             raise exc
+
+    async def mark_as_read(self, id: PydanticObjectId) -> Ticket:
+        ticket = await self.get_ticket(id)
+        ticket.leido = True
+        await ticket.save()
+        return ticket
 
     async def update_ticket(self, id: PydanticObjectId, ticket_in: TicketUpdate) -> Ticket:
         ticket = await self.repository.update(id, ticket_in)

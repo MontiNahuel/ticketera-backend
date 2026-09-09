@@ -276,6 +276,107 @@ def test_rate_limit_and_cooldown(client):
     assert res2.status_code == 400
     assert "espera" in res2.json()["message"].lower() or "anti-spam" in res2.json()["message"].lower()
 
+def test_admin_whitelist_bypasses_rate_limit(client):
+    from src.config.settings import settings
+    admin_email = "admin_unlimited@coopya.com"
+    if admin_email not in settings.ADMIN_EMAILS:
+        settings.ADMIN_EMAILS.append(admin_email)
+
+    try:
+        # El admin debe poder crear múltiples tickets de forma consecutiva e inmediata sin cooldown
+        res1 = client.post("/api/v1/tickets/", data={
+            "titulo": "Ticket Admin 1",
+            "descripcion": "Primer ticket de admin",
+            "correo": admin_email
+        })
+        assert res1.status_code == 201
+
+        res2 = client.post("/api/v1/tickets/", data={
+            "titulo": "Ticket Admin 2 Inmediato",
+            "descripcion": "Segundo ticket inmediato sin esperar cooldown",
+            "correo": admin_email
+        })
+        assert res2.status_code == 201
+        assert res2.json()["identificador"] != res1.json()["identificador"]
+    finally:
+        if admin_email in settings.ADMIN_EMAILS:
+            settings.ADMIN_EMAILS.remove(admin_email)
+
+def test_frecuencia_support(client):
+    uid = uuid.uuid4().hex[:6]
+    # 1. Crear ticket con frecuencia válida
+    frecuencia_json = '{"numero": 2, "periodo": "Meses"}'
+    res = client.post("/api/v1/tickets/", data={
+        "titulo": "Ticket Recurrente",
+        "descripcion": "Mantenimiento bimestral",
+        "correo": f"frec_{uid}@coopya.com",
+        "frecuencia": frecuencia_json
+    })
+    assert res.status_code == 201
+    ticket = res.json()
+    assert ticket["frecuencia"] is not None
+    assert ticket["frecuencia"]["numero"] == 2
+    assert ticket["frecuencia"]["periodo"] == "Meses"
+
+    # 2. Rechazar período inválido
+    uid_inv = uuid.uuid4().hex[:6]
+    frecuencia_invalida = '{"numero": 1, "periodo": "Horas"}'
+    res_inv = client.post("/api/v1/tickets/", data={
+        "titulo": "Ticket Inválido",
+        "descripcion": "Mantenimiento horario no soportado",
+        "correo": f"inv_{uid_inv}@coopya.com",
+        "frecuencia": frecuencia_invalida
+    })
+    assert res_inv.status_code == 400
+    assert "frecuencia" in res_inv.json()["message"].lower()
+
+def test_ticket_read_status(client):
+    uid = uuid.uuid4().hex[:6]
+    # 1. Ticket recién creado tiene leido=False
+    res = client.post("/api/v1/tickets/", data={
+        "titulo": "Ticket No Leído",
+        "descripcion": "Verificar flag leido",
+        "correo": f"read_{uid}@coopya.com"
+    })
+    assert res.status_code == 201
+    ticket = res.json()
+    assert ticket["leido"] is False
+    ticket_id = ticket["id"]
+
+    # 2. Marcar como leído vía PATCH /{id}/read
+    read_res = client.patch(f"/api/v1/tickets/{ticket_id}/read")
+    assert read_res.status_code == 200
+    assert read_res.json()["leido"] is True
+
+    # 3. Verificar que al consultar por GET permanezca leído
+    get_res = client.get(f"/api/v1/tickets/{ticket_id}")
+    assert get_res.status_code == 200
+    assert get_res.json()["leido"] is True
+
+def test_sse_broadcast_on_ticket_creation(client):
+    import asyncio
+    from src.core.sse_manager import sse_manager
+
+    loop = asyncio.get_event_loop() if not asyncio.get_event_loop().is_closed() else asyncio.new_event_loop()
+    queue = loop.run_until_complete(sse_manager.subscribe())
+
+    uid = uuid.uuid4().hex[:6]
+    try:
+        res = client.post("/api/v1/tickets/", data={
+            "titulo": "Ticket para SSE",
+            "descripcion": "Probando transmisión SSE",
+            "correo": f"sse_{uid}@coopya.com"
+        })
+        assert res.status_code == 201
+        ticket = res.json()
+
+        assert not queue.empty()
+        event = queue.get_nowait()
+        assert event["event"] == "nuevo_ticket"
+        assert event["data"]["identificador"] == ticket["identificador"]
+    finally:
+        sse_manager.unsubscribe(queue)
+
 if __name__ == "__main__":
     import sys
     print("Ejecutando suite de pruebas...")

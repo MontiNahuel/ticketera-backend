@@ -1,8 +1,12 @@
 from enum import Enum
-from typing import Optional, List
+from typing import Optional, List, Literal
 from datetime import datetime, timezone
 from beanie import Document, Indexed
-from pydantic import Field, EmailStr
+from pydantic import BaseModel, Field, EmailStr
+
+class Frecuencia(BaseModel):
+    numero: int = Field(default=1, ge=1, description="Intervalo numérico")
+    periodo: Literal["Días", "Semanas", "Meses", "Años"] = Field(..., description="Período de repetición")
 
 class PrioridadEnum(str, Enum):
     BAJA = "baja"
@@ -28,6 +32,9 @@ class Ticket(Document):
     prioridad: PrioridadEnum = Field(default=PrioridadEnum.MEDIA)
     estado: EstadoEnum = Field(default=EstadoEnum.ABIERTO)
     columna: int = Field(default=1, ge=1, le=4, description="ID numérico de la columna (1: Ticket, 2: Hitos, 3: Tareas, 4: Tareas periódicas)")
+    leido: bool = Field(default=False, description="Indica si el ticket ya fue abierto/leído por el equipo")
+    frecuencia: Optional[Frecuencia] = Field(default=None, description="Frecuencia periódica de repetición si aplica")
 
     class Settings:
         name = "tickets"
+

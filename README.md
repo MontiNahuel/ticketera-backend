@@ -55,10 +55,11 @@ Crea el archivo `.env` a partir de `.env.example`:
   cp .env.example .env
   ```
 
-Asegúrate de que MongoDB esté corriendo en tu sistema o ajusta la variable `MONGO_URI` dentro del archivo `.env`:
+Asegúrate de que MongoDB esté corriendo en tu sistema o ajusta las variables dentro del archivo `.env`:
 ```env
 MONGO_URI=mongodb://localhost:27017/tickets_db
 BACKEND_CORS_ORIGINS=["http://localhost:3000", "http://localhost:5173", "http://localhost:8000"]
+ADMIN_EMAILS=["admin@coopya.com", "nahuel@coopya.com"]  # Admins exentos de cooldown y rate limit
 ```
 
 ### 5. Iniciar el servidor
@@ -87,7 +88,7 @@ Base URL: `http://localhost:8000/api/v1`
 
 #### `POST /api/v1/tickets/` — Crear Ticket con Imágenes
 > **Content-Type**: `multipart/form-data`  
-> **Seguridad**: Cooldown de 60 segundos por correo y máximo 8 tickets diarios.  
+> **Seguridad**: Cooldown de 60 segundos por correo y máximo 8 tickets diarios (excepto si el correo está configurado en `ADMIN_EMAILS`).  
 > **Formatos de imagen permitidos**: PNG, JPEG, JPG, WebP, GIF, SVG, AVIF, BMP.
 
 **Campos del Formulario (`FormData`)**:
@@ -98,7 +99,11 @@ Base URL: `http://localhost:8000/api/v1`
 | `correo` | `string (email)` | Sí | Correo del solicitante | `"carlos@coopya.com"` |
 | `prioridad` | `string` | No | `"baja" \| "media" \| "alta" \| "critica"` (default: `"media"`) | `"alta"` |
 | `asignar` | `string` | No | Nombre del técnico asignado | `"Facundo Bernard"` |
+| `columna` | `int` | No | Columna del tablero: `1` (TICKET), `2` (HITOS), `3` (TAREAS), `4` (TAREAS PERIÓDICAS). (default: `1`) | `1` |
+| `frecuencia` | `string (JSON)` | No | Objeto serializado JSON con frecuencia para tareas periódicas | `{"numero": 1, "periodo": "Semanas"}` |
 | `files` | `File[] (binario)` | No | Archivos de imagen adjuntos (múltiples) | `captura1.png`, `foto2.jpg` |
+
+> ℹ️ **Valores permitidos para `periodo` en `frecuencia`**: `"Días"`, `"Semanas"`, `"Meses"`, `"Años"` (con mayúscula inicial y tildes exactas). `numero` debe ser un entero `>= 1`.
 
 **Respuesta Exitosa (`201 Created`)**:
 ```json
@@ -111,6 +116,9 @@ Base URL: `http://localhost:8000/api/v1`
   "prioridad": "alta",
   "estado": "abierto",
   "asignar": "Facundo Bernard",
+  "columna": 1,
+  "leido": false,
+  "frecuencia": null,
   "imagenes": [
     "/api/v1/files/66d34b9e4a1b2c3d4e5f6a7c",
     "/api/v1/files/66d34b9e4a1b2c3d4e5f6a7d"
@@ -128,6 +136,8 @@ Base URL: `http://localhost:8000/api/v1`
 
 | Parámetro | Tipo | Descripción | Ejemplo |
 | :--- | :--- | :--- | :--- |
+| `columna` | `int` | Filtro por columna (`1, 2, 3, 4`) | `1` |
+| `leido` | `bool` | Filtro por estado de lectura (`true` o `false`) | `false` |
 | `fecha_desde` | `string` | Filtro desde fecha (autocompleta a las 00:00 UTC) | `2026-08-01` o `01/08/2026` |
 | `fecha_hasta` | `string` | Filtro hasta fecha (autocompleta a las 23:59 UTC) | `2026-08-31` o `31/08/2026` |
 | `estado` | `string` | `"abierto" \| "en_progreso" \| "resuelto" \| "cerrado"` | `en_progreso` |
@@ -148,6 +158,9 @@ Base URL: `http://localhost:8000/api/v1`
     "prioridad": "alta",
     "estado": "abierto",
     "asignar": "Facundo Bernard",
+    "columna": 1,
+    "leido": false,
+    "frecuencia": null,
     "imagenes": ["/api/v1/files/66d34b9e4a1b2c3d4e5f6a7c"],
     "fecha_creacion": "2026-08-31T18:24:39.123456Z",
     "fecha_edicion": null
@@ -172,11 +185,66 @@ Base URL: `http://localhost:8000/api/v1`
 {
   "estado": "en_progreso",
   "asignar": "Nahuel Monti",
-  "prioridad": "critica"
+  "prioridad": "critica",
+  "columna": 2,
+  "frecuencia": {
+    "numero": 2,
+    "periodo": "Meses"
+  }
 }
 ```
 
 **Respuesta (`200 OK`)**: Objeto `TicketResponse` con `fecha_edicion` actualizada automáticamente en UTC.
+
+---
+
+#### `PATCH /api/v1/tickets/{id}/read` — Marcar Ticket como Leído
+> **Método**: `PATCH`  
+> Actualiza el flag `leido = true` cuando un operador abre o visualiza el ticket en el frontend.
+
+**Respuesta (`200 OK`)**: Objeto `TicketResponse` con `leido: true`.
+
+---
+
+#### `GET /api/v1/tickets/stream` — Canal en Tiempo Real (Server-Sent Events - SSE)
+> **Método**: `GET`  
+> **Content-Type**: `text/event-stream`  
+> Conexión persistente unidireccional (ligera, nativa de HTTP/FastAPI) que emite un evento cada vez que entra un nuevo ticket a la base de datos.
+> Envía periódicamente `: ping\n\n` como keep-alive para evitar que proxies o Railway cierren la conexión por inactividad.
+
+**Ejemplo de Integración en Frontend (React / JavaScript Nativo) con Notificaciones de Escritorio**:
+```javascript
+// 1. Solicitar permiso para notificaciones de escritorio al cargar
+if ("Notification" in window && Notification.permission === "default") {
+  Notification.requestPermission();
+}
+
+// 2. Conectar al canal SSE
+const eventSource = new EventSource("http://localhost:8000/api/v1/tickets/stream");
+
+eventSource.onmessage = (event) => {
+  const newTicket = JSON.parse(event.data);
+  console.log("Nuevo ticket recibido en tiempo real:", newTicket);
+
+  // Actualizar estado / tablero en React (ej: prepend a la lista)
+  // setTickets(prev => [newTicket, ...prev]);
+
+  // Mostrar notificación nativa de escritorio
+  if ("Notification" in window && Notification.permission === "granted") {
+    new Notification(`🎫 Nuevo Ticket: ${newTicket.identificador}`, {
+      body: `${newTicket.titulo} - Solicitante: ${newTicket.correo}`,
+      icon: "/logo.png"
+    });
+  }
+};
+
+eventSource.onerror = (err) => {
+  console.error("Error en conexión SSE, el navegador reconectará automáticamente:", err);
+};
+
+// Cerrar conexión al desmontar componente:
+// eventSource.close();
+```
 
 ---
 
