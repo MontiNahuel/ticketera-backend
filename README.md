@@ -286,7 +286,7 @@ Todos los catálogos devuelven el formato estándar `OptionItem[]` (`[{ value, l
 ```json
 [
   { "value": "facundo_bernard", "label": "Facundo Bernard" },
-  { "value": "nicolas_gonzalez", "label": "Nicolas Gonzalez" },
+  { "value": "nicolas_fernandez", "label": "Nicolas Fernandez" },
   { "value": "nahuel_monti", "label": "Nahuel Monti" }
 ]
 ```
